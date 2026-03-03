@@ -1,0 +1,624 @@
+# 🔥 بدر فورج — التعليمات النهائية للتحول إلى "مصنع مشاريع"
+## من Blueprint Generator → Project Factory على Kwork Cloud Desktop
+
+---
+
+## 📌 السياق (Context for AI Agents)
+
+**المشروع:** بدر فورج (Badr Forge) v5.4.1
+**الحالة الحالية:** واجهة مستقرة تماماً كمولد وثائق (Blueprint Generator) — مكتملة ولا تحتاج تحسينات إضافية.
+**الهدف:** التحول من "مولد وثائق" إلى "مصنع مشاريع كاملة" يأخذ المدخلات وينتج مشروع Next.js/Prisma جاهز للنشر.
+**البيئة:** Kwork Cloud Desktop (Linux-based cloud environment)
+**الأدوات:** Claude Code, Cursor, Aider, Next.js, Vercel CLI, Git
+
+---
+
+## 🏗️ الهيكل المعماري النهائي (Target Architecture)
+
+```
+[1] واجهة Forge UI (المكتملة v5.4.1)
+     ↓ POST /api/forge/run
+[2] Next.js API Route (الخادم الوسيط - Backend Orchestrator)
+     ↓ Claude API + API Key آمن (server-side فقط)
+[3] Blueprint Generator Engine
+     ↓ يحفظ forge-blueprint.json
+[4] /jobs/{jobId}/ (نظام ملفات المهام)
+     ↓ يشغل CLI
+[5] AI Agent (Aider) — التنفيذ الآلي بدون تدخل يدوي
+     ↓ يقرأ blueprint.json → يكتب الكود
+[6] Auto-Fix Loop — حلقة التصحيح الذاتي
+     ↓ npm run build → إصلاح → إعادة بناء
+[7] Auto-Deploy — النشر التلقائي
+     ↓ vercel --prod أو git push
+[8] رابط حي للمستخدم ✅
+```
+
+---
+
+## 🚀 مراحل التنفيذ (5 Sprints)
+
+---
+
+### Sprint 1: الخادم الوسيط (Backend Orchestrator)
+**المدة:** يومان
+**الأولوية:** 🔴 حرجة — بدون هذا لا يعمل شيء
+
+#### المهمة 1.1: إنشاء مشروع Next.js للخادم
+```bash
+cd /home/user/projects
+npx create-next-app@latest badr-forge-server --typescript --app --tailwind --eslint
+cd badr-forge-server
+npm install uuid
+```
+
+#### المهمة 1.2: إنشاء API Route الرئيسي
+**الملف:** `app/api/forge/run/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { writeFileSync, mkdirSync, existsSync } from "fs";
+import path from "path";
+
+const JOBS_DIR = "/home/user/jobs";
+const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY!;
+
+export async function POST(req: NextRequest) {
+  const jobId = randomUUID().slice(0, 8);
+  const jobDir = path.join(JOBS_DIR, jobId);
+
+  // إنشاء مجلد المهمة
+  mkdirSync(jobDir, { recursive: true });
+
+  const body = await req.json();
+
+  // حفظ المدخلات
+  writeFileSync(
+    path.join(jobDir, "input.json"),
+    JSON.stringify(body, null, 2),
+    "utf-8"
+  );
+
+  // تحديث حالة المهمة
+  writeFileSync(
+    path.join(jobDir, "status.json"),
+    JSON.stringify({ status: "generating_blueprint", startedAt: new Date().toISOString() }),
+    "utf-8"
+  );
+
+  // بدء التوليد في الخلفية (لا ننتظره)
+  generateBlueprint(jobId, body).catch((err) => {
+    writeFileSync(
+      path.join(jobDir, "status.json"),
+      JSON.stringify({ status: "error", error: err.message }),
+      "utf-8"
+    );
+  });
+
+  return NextResponse.json({ jobId, status: "started" });
+}
+
+async function generateBlueprint(jobId: string, input: any) {
+  const jobDir = path.join(JOBS_DIR, jobId);
+  const STAGES = [
+    { name: "stage1_prd", prompt: `أنت مهندس متطلبات. أنشئ PRD كاملاً لـ: ${input.projectName}. الوصف: ${input.description}` },
+    { name: "stage2_architecture", prompt: `بناءً على PRD التالي، صمم الهيكل المعماري...` },
+    { name: "stage3_database", prompt: `صمم مخطط قاعدة البيانات (Prisma Schema)...` },
+    { name: "stage4_api", prompt: `صمم نقاط API endpoints...` },
+    { name: "stage5_ui", prompt: `صمم مكونات واجهة المستخدم...` },
+    { name: "stage6_blueprint", prompt: `اجمع كل المخرجات السابقة في ملف blueprint.json واحد...` },
+  ];
+
+  const results: Record<string, any> = {};
+
+  for (const stage of STAGES) {
+    // تأخير 2 ثانية بين المراحل (Rate Limiting)
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": CLAUDE_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          messages: [{ role: "user", content: stage.prompt }],
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      const data = await res.json();
+      results[stage.name] = data.content?.[0]?.text || "";
+
+      // حفظ نتيجة كل مرحلة
+      writeFileSync(
+        path.join(jobDir, `${stage.name}.json`),
+        JSON.stringify(results[stage.name], null, 2),
+        "utf-8"
+      );
+
+      // تحديث الحالة
+      writeFileSync(
+        path.join(jobDir, "status.json"),
+        JSON.stringify({ status: "generating", currentStage: stage.name }),
+        "utf-8"
+      );
+    } catch (err: any) {
+      clearTimeout(timeout);
+      results[stage.name] = `ERROR: ${err.message}`;
+    }
+  }
+
+  // حفظ البلوبرنت النهائي
+  writeFileSync(
+    path.join(jobDir, "blueprint.json"),
+    JSON.stringify(results, null, 2),
+    "utf-8"
+  );
+
+  writeFileSync(
+    path.join(jobDir, "status.json"),
+    JSON.stringify({ status: "blueprint_ready", completedAt: new Date().toISOString() }),
+    "utf-8"
+  );
+}
+```
+
+#### المهمة 1.3: إنشاء Endpoint لمتابعة الحالة
+**الملف:** `app/api/forge/status/[jobId]/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+import { readFileSync, existsSync } from "fs";
+import path from "path";
+
+const JOBS_DIR = "/home/user/jobs";
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { jobId: string } }
+) {
+  const statusFile = path.join(JOBS_DIR, params.jobId, "status.json");
+
+  if (!existsSync(statusFile)) {
+    return NextResponse.json({ error: "Job not found" }, { status: 404 });
+  }
+
+  const status = JSON.parse(readFileSync(statusFile, "utf-8"));
+  return NextResponse.json(status);
+}
+```
+
+#### المهمة 1.4: متغيرات البيئة
+**الملف:** `.env.local`
+```
+CLAUDE_API_KEY=sk-ant-xxxxx
+```
+
+⚠️ **تحذير أمني:** لا ترفع هذا الملف على Git أبداً. أضفه لـ .gitignore.
+
+---
+
+### Sprint 2: نظام إدارة المهام (Job Management)
+**المدة:** يوم واحد
+**الأولوية:** 🟡 مهمة
+
+#### هيكل مجلد المهمة:
+```
+/home/user/jobs/
+  └── {jobId}/
+      ├── input.json          ← مدخلات المستخدم الأصلية
+      ├── status.json         ← حالة المهمة الحالية
+      ├── stage1_prd.json     ← مخرجات المرحلة 1
+      ├── stage2_architecture.json
+      ├── stage3_database.json
+      ├── stage4_api.json
+      ├── stage5_ui.json
+      ├── stage6_blueprint.json
+      ├── blueprint.json      ← البلوبرنت النهائي المجمع
+      ├── logs.txt            ← سجلات تنفيذ الوكيل
+      └── project/            ← المشروع المبني (كود فعلي)
+          ├── package.json
+          ├── prisma/
+          ├── app/
+          └── ...
+```
+
+#### حالات المهمة (Status Flow):
+```
+started → generating_blueprint → blueprint_ready → building → build_fixing → build_success → deploying → deployed ✅
+                                                                    ↓
+                                                              build_failed ❌ (بعد 5 محاولات)
+```
+
+---
+
+### Sprint 3: الوكيل المنفذ (AI Agent Runner)
+**المدة:** يومان
+**الأولوية:** 🔴 حرجة
+
+#### المهمة 3.1: تثبيت Aider على Kwork Cloud Desktop
+```bash
+pip install aider-chat
+aider --version  # تأكد من التثبيت
+
+# تعيين مفتاح API
+export ANTHROPIC_API_KEY=sk-ant-xxxxx
+```
+
+#### المهمة 3.2: سكربت تشغيل الوكيل
+**الملف:** `scripts/run-agent.sh`
+
+```bash
+#!/bin/bash
+# سكربت تشغيل الوكيل المنفذ
+# الاستخدام: ./scripts/run-agent.sh <jobId>
+
+JOB_ID=$1
+JOB_DIR="/home/user/jobs/$JOB_ID"
+PROJECT_DIR="$JOB_DIR/project"
+BLUEPRINT="$JOB_DIR/blueprint.json"
+LOG_FILE="$JOB_DIR/logs.txt"
+
+# التحقق من وجود البلوبرنت
+if [ ! -f "$BLUEPRINT" ]; then
+  echo "❌ لا يوجد blueprint.json للمهمة $JOB_ID" | tee -a "$LOG_FILE"
+  exit 1
+fi
+
+# إنشاء مجلد المشروع
+mkdir -p "$PROJECT_DIR"
+cd "$PROJECT_DIR"
+
+# تهيئة المشروع
+npx create-next-app@latest . --typescript --app --tailwind --eslint --no-git --yes 2>&1 | tee -a "$LOG_FILE"
+
+# تثبيت Prisma
+npm install prisma @prisma/client 2>&1 | tee -a "$LOG_FILE"
+npx prisma init 2>&1 | tee -a "$LOG_FILE"
+
+# تشغيل Aider مع البلوبرنت
+echo "🚀 بدء تنفيذ البلوبرنت..." | tee -a "$LOG_FILE"
+
+aider \
+  --message "اقرأ الملف التالي وابنِ المشروع كاملاً بناءً عليه. الملف: $(cat $BLUEPRINT)" \
+  --yes \
+  --auto-commits \
+  --no-auto-lint \
+  --model claude-sonnet-4-20250514 \
+  2>&1 | tee -a "$LOG_FILE"
+
+echo "✅ انتهى الوكيل من التنفيذ" | tee -a "$LOG_FILE"
+```
+
+```bash
+chmod +x scripts/run-agent.sh
+```
+
+#### المهمة 3.3: ربط الـ Runner بالخادم
+**أضف في نهاية دالة `generateBlueprint`:**
+
+```typescript
+import { exec } from "child_process";
+
+// بعد حفظ blueprint.json
+exec(
+  `bash /home/user/projects/badr-forge-server/scripts/run-agent.sh ${jobId}`,
+  (error, stdout, stderr) => {
+    const jobDir = path.join(JOBS_DIR, jobId);
+    if (error) {
+      writeFileSync(
+        path.join(jobDir, "status.json"),
+        JSON.stringify({ status: "build_failed", error: stderr }),
+        "utf-8"
+      );
+    } else {
+      writeFileSync(
+        path.join(jobDir, "status.json"),
+        JSON.stringify({ status: "build_success" }),
+        "utf-8"
+      );
+    }
+  }
+);
+```
+
+---
+
+### Sprint 4: حلقة التصحيح الذاتي (Auto-Fix Loop)
+**المدة:** يوم واحد
+**الأولوية:** 🟡 مهمة — هذا ما يفصل الأداة العادية عن المصنع الذكي
+
+#### المهمة 4.1: سكربت التصحيح الذاتي
+**الملف:** `scripts/auto-fix.sh`
+
+```bash
+#!/bin/bash
+# حلقة التصحيح الذاتي
+# الاستخدام: ./scripts/auto-fix.sh <jobId>
+
+JOB_ID=$1
+PROJECT_DIR="/home/user/jobs/$JOB_ID/project"
+LOG_FILE="/home/user/jobs/$JOB_ID/logs.txt"
+MAX_ATTEMPTS=5
+ATTEMPT=0
+
+cd "$PROJECT_DIR"
+
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+  ATTEMPT=$((ATTEMPT + 1))
+  echo "🔄 محاولة البناء رقم $ATTEMPT من $MAX_ATTEMPTS..." | tee -a "$LOG_FILE"
+
+  # محاولة البناء
+  BUILD_OUTPUT=$(npm run build 2>&1)
+  BUILD_EXIT=$?
+
+  if [ $BUILD_EXIT -eq 0 ]; then
+    echo "✅ البناء نجح في المحاولة $ATTEMPT!" | tee -a "$LOG_FILE"
+    echo '{"status":"build_success","attempts":'$ATTEMPT'}' > "/home/user/jobs/$JOB_ID/status.json"
+    exit 0
+  fi
+
+  echo "❌ فشل البناء. جاري الإصلاح التلقائي..." | tee -a "$LOG_FILE"
+
+  # استخراج آخر 20 سطر من الخطأ
+  ERROR_MSG=$(echo "$BUILD_OUTPUT" | tail -20)
+
+  # إرسال الخطأ للوكيل للإصلاح
+  aider \
+    --message "فشل npm run build بالخطأ التالي. أصلحه:
+$ERROR_MSG" \
+    --yes \
+    --auto-commits \
+    --model claude-sonnet-4-20250514 \
+    2>&1 | tee -a "$LOG_FILE"
+
+  # انتظار قبل المحاولة التالية
+  sleep 3
+done
+
+echo "❌ فشل البناء بعد $MAX_ATTEMPTS محاولات" | tee -a "$LOG_FILE"
+echo '{"status":"build_failed","attempts":'$MAX_ATTEMPTS'}' > "/home/user/jobs/$JOB_ID/status.json"
+exit 1
+```
+
+```bash
+chmod +x scripts/auto-fix.sh
+```
+
+#### المهمة 4.2: تعديل run-agent.sh لتشغيل auto-fix بعد الانتهاء
+
+أضف في نهاية `run-agent.sh` قبل السطر الأخير:
+```bash
+# تشغيل حلقة التصحيح الذاتي
+echo "🔧 بدء حلقة التصحيح الذاتي..." | tee -a "$LOG_FILE"
+bash /home/user/projects/badr-forge-server/scripts/auto-fix.sh "$JOB_ID"
+```
+
+---
+
+### Sprint 5: النشر التلقائي (Auto-Deploy)
+**المدة:** يوم واحد
+**الأولوية:** 🟢 إكمال الحلقة
+
+#### المهمة 5.1: سكربت النشر
+**الملف:** `scripts/deploy.sh`
+
+```bash
+#!/bin/bash
+# النشر التلقائي
+# الاستخدام: ./scripts/deploy.sh <jobId>
+
+JOB_ID=$1
+PROJECT_DIR="/home/user/jobs/$JOB_ID/project"
+LOG_FILE="/home/user/jobs/$JOB_ID/logs.txt"
+
+cd "$PROJECT_DIR"
+
+# التحقق من نجاح البناء
+STATUS=$(cat "/home/user/jobs/$JOB_ID/status.json" | grep -o '"status":"[^"]*"' | head -1)
+if [[ "$STATUS" != *"build_success"* ]]; then
+  echo "⚠️ لا يمكن النشر: البناء لم ينجح بعد" | tee -a "$LOG_FILE"
+  exit 1
+fi
+
+echo "🚀 بدء النشر على Vercel..." | tee -a "$LOG_FILE"
+
+# تهيئة Git
+git init
+git add .
+git commit -m "🔥 Auto-generated by Badr Forge - Job $JOB_ID"
+
+# النشر على Vercel
+DEPLOY_URL=$(npx vercel --prod --yes --token=$VERCEL_TOKEN 2>&1 | tail -1)
+
+echo "✅ تم النشر: $DEPLOY_URL" | tee -a "$LOG_FILE"
+
+# تحديث الحالة
+cat > "/home/user/jobs/$JOB_ID/status.json" << EOF
+{
+  "status": "deployed",
+  "url": "$DEPLOY_URL",
+  "deployedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+
+echo "🎉 المشروع جاهز: $DEPLOY_URL" | tee -a "$LOG_FILE"
+```
+
+```bash
+chmod +x scripts/deploy.sh
+```
+
+---
+
+## 📋 ملخص الملفات المطلوب إنشاؤها
+
+| # | الملف | الغرض |
+|---|-------|-------|
+| 1 | `app/api/forge/run/route.ts` | استقبال الطلب وتوليد البلوبرنت |
+| 2 | `app/api/forge/status/[jobId]/route.ts` | متابعة حالة المهمة |
+| 3 | `scripts/run-agent.sh` | تشغيل الوكيل المنفذ |
+| 4 | `scripts/auto-fix.sh` | حلقة التصحيح الذاتي |
+| 5 | `scripts/deploy.sh` | النشر التلقائي |
+| 6 | `.env.local` | مفاتيح API |
+
+---
+
+## ⚡ أمر التشغيل السريع (Quick Start)
+
+```bash
+# 1. إنشاء المشروع
+cd /home/user/projects
+npx create-next-app@latest badr-forge-server --typescript --app --tailwind --eslint
+cd badr-forge-server
+
+# 2. إنشاء المجلدات
+mkdir -p scripts /home/user/jobs
+
+# 3. تعيين المتغيرات
+echo "CLAUDE_API_KEY=sk-ant-xxxxx" > .env.local
+export VERCEL_TOKEN=xxxxx
+export ANTHROPIC_API_KEY=sk-ant-xxxxx
+
+# 4. تثبيت Aider
+pip install aider-chat
+
+# 5. تشغيل الخادم
+npm run dev
+
+# 6. اختبار يدوي
+curl -X POST http://localhost:3000/api/forge/run \
+  -H "Content-Type: application/json" \
+  -d '{"projectName":"test-app","description":"تطبيق إدارة مهام بسيط"}'
+
+# 7. متابعة الحالة
+curl http://localhost:3000/api/forge/status/{jobId}
+```
+
+---
+
+## 🧠 الرأي النهائي المدمج (Claude + Gemini + GPT + DeepSeek)
+
+### ما اتفقت عليه جميع النماذج بلا استثناء:
+
+1. **واجهة v5.4.1 مكتملة — توقف عن تحسينها.** أي وقت إضافي هنا هو هدر. AbortController + Rate Limiting Delay أغلقا آخر ثغرات الاستقرار.
+
+2. **الخطوة الوحيدة المنطقية: نقل الذكاء للخادم.** مفتاح API يجب أن يعيش server-side فقط. الواجهة ترسل الطلب وتنتظر النتيجة.
+
+3. **نمط Job Queue بنظام الملفات** هو الأنسب لبيئة Kwork Cloud Desktop (لا حاجة لـ Redis أو قاعدة بيانات في هذه المرحلة).
+
+4. **حلقة Build → Fix → Build** هي ما يفصل "أداة توليد" عن "مصنع حقيقي".
+
+### أين اختلفت النماذج (وما الأفضل):
+
+| النقطة | جيميني | جيبتي | ديب سيك | رأيي (Claude) |
+|--------|--------|-------|---------|---------------|
+| أداة التنفيذ | Aider أو Cline | Aider | Aider/Cline | **ابدأ بـ Aider** — أنضج وأوثق. Cline بديل لاحقاً |
+| تقسيم البلوبرنت | لم يفصّل | 6 مراحل متسلسلة | مراحل مع context chaining | **6 مراحل مع تمرير السياق** — كل مرحلة تأخذ مخرجات السابقة |
+| التصحيح الذاتي | ذكره كمبدأ | سكربت كل 30 ثانية | حلقة npm run build | **5 محاولات كحد أقصى** مع tail -20 للأخطاء |
+| النشر | Vercel أو Git | Vercel CLI | Vercel/Git | **Vercel CLI أولاً** — أبسط وأسرع |
+| الأمان | لم يفصّل | لم يفصّل | لم يفصّل | **أضف تحقق من المدخلات + rate limiting على API route** |
+
+### ما أضيفه أنا (لم تذكره أي نماذج):
+
+1. **Context Chaining بين المراحل:** المرحلة 2 يجب أن تستقبل مخرجات المرحلة 1 في الـ prompt — وليس فقط "بناءً على PRD". هذا يمنع التناقضات.
+
+2. **حجم البلوبرنت:** ملف blueprint.json الضخم لن يدخل في context window الوكيل. الحل: قسّمه لملفات أصغر (database.prisma, routes.ts, components.md) واجعل الوكيل ينفذ ملفاً ملفاً.
+
+3. **Fallback Model:** إذا فشل Claude API، جرب Sonnet بدل Opus لتقليل التكلفة. أضف try/catch مع model fallback.
+
+4. **تنظيف المهام القديمة:** أضف cron job يحذف مجلدات /jobs/ الأقدم من 7 أيام لتوفير المساحة.
+
+---
+
+## 🎯 التعليمة الجاهزة للصق في Claude Code / Cursor
+
+انسخ هذا النص كاملاً والصقه كأول رسالة:
+
+```
+أنت مهندس برمجيات تبني "Badr Forge Server" — خادم وسيط يحول مخططات المشاريع (Blueprints) إلى مشاريع Next.js كاملة.
+
+## البيئة:
+- Kwork Cloud Desktop (Linux)
+- Next.js 14+ مع App Router و TypeScript
+- Prisma لقواعد البيانات
+- Aider كوكيل تنفيذ آلي
+- Vercel للنشر
+
+## المطلوب بناؤه (بالترتيب):
+
+### 1. API Route: POST /api/forge/run
+- يستقبل { projectName, description, features[] }
+- ينشئ jobId فريد ومجلد /jobs/{jobId}/
+- يبدأ توليد البلوبرنت في الخلفية عبر 6 مراحل متسلسلة مع Claude API
+- كل مرحلة تأخذ مخرجات المرحلة السابقة كسياق (Context Chaining)
+- تأخير 2 ثانية بين المراحل + AbortController بـ 60 ثانية timeout
+- يحفظ blueprint.json النهائي في مجلد المهمة
+
+### 2. API Route: GET /api/forge/status/{jobId}
+- يعيد حالة المهمة الحالية من status.json
+
+### 3. سكربت run-agent.sh
+- يأخذ jobId كمدخل
+- ينشئ مشروع Next.js في /jobs/{jobId}/project/
+- يثبت Prisma
+- يشغل Aider بوضع headless مع --yes --auto-commits
+- يمرر البلوبرنت كتعليمات للوكيل
+
+### 4. سكربت auto-fix.sh
+- يشغل npm run build
+- عند الفشل: يأخذ آخر 20 سطر من الخطأ ويرسلها لـ Aider للإصلاح
+- يكرر حتى 5 محاولات كحد أقصى
+
+### 5. سكربت deploy.sh
+- يتحقق من نجاح البناء
+- git init + commit
+- vercel --prod --yes
+
+## القواعد:
+- API Key في server-side فقط (.env.local)
+- كل مهمة في مجلد منفصل: /jobs/{jobId}/
+- سجل كل شيء في logs.txt
+- حالات المهمة: started → generating → blueprint_ready → building → build_success → deployed
+- لا تستخدم قاعدة بيانات — نظام الملفات كافٍ الآن
+
+ابدأ بـ Sprint 1: إنشاء هيكل المشروع و API Routes.
+```
+
+---
+
+## ⚠️ تحذيرات مهمة قبل البدء
+
+1. **لا تبدأ بكل شيء مرة واحدة.** Sprint 1 أولاً، اختبره يدوياً، ثم انتقل لـ Sprint 2.
+2. **اختبر الـ API يدوياً بـ curl** قبل ربط الواجهة.
+3. **Aider يحتاج مفتاح API منفصل** في متغير البيئة ANTHROPIC_API_KEY.
+4. **راقب التكاليف:** كل عملية صهر = 6 طلبات API + طلبات الوكيل + طلبات التصحيح. ممكن تكون مكلفة.
+5. **ابدأ بمشروع بسيط جداً كاختبار** (مثل "تطبيق قائمة مهام") قبل المشاريع المعقدة.
+
+---
+
+## 📊 الجدول الزمني النهائي
+
+| Sprint | المهمة | المدة | يبدأ بعد |
+|--------|--------|-------|----------|
+| 1 | الخادم الوسيط + API Routes | يومان | فوراً |
+| 2 | نظام إدارة المهام | يوم | Sprint 1 |
+| 3 | الوكيل المنفذ (Aider) | يومان | Sprint 2 |
+| 4 | حلقة التصحيح الذاتي | يوم | Sprint 3 |
+| 5 | النشر التلقائي | يوم | Sprint 4 |
+| **المجموع** | **مصنع مشاريع كامل** | **7 أيام** | — |
+
+---
+
+*تم إعداد هذا الملف بدمج تحليلات: Claude (Anthropic) + Gemini (Google) + GPT (OpenAI) + DeepSeek*
+*التاريخ: مارس 2026*
+*الإصدار: Final v1.0*

@@ -1,0 +1,21 @@
+# مفاتيح API — لا ترفعها أبداً
+.env
+.env.local
+.env.*.local
+
+# تبعيات ومخرجات
+node_modules/
+.next/
+out/
+dist/
+
+# مجلد المهام (قد يحتوي بيانات حساسة)
+jobs/
+
+# سجلات
+*.log
+logs.txt
+
+# نظام التشغيل
+.DS_Store
+Thumbs.db
