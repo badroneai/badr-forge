@@ -2,39 +2,83 @@
 
 خادم وسيط لتوليد Blueprints ومشاريع Next.js (بدر فورج).
 
-## التشغيل المحلي
+## خطوات التشغيل الأولى
 
-1. **التأكد من المفتاح:**  
-   في مجلد المشروع (`projects/badr-forge-server`) يجب وجود ملف `.env.local` ويحتوي على:
+يُنصح بتشغيل سكربت التحقق من البيئة قبل التشغيل لأول مرة:
+
+1. **التحقق من البيئة**
+   - **Windows (PowerShell):** من مجلد الخادم `projects/badr-forge-server`:
+     ```powershell
+     .\scripts\check-env.ps1
+     ```
+   - **Linux / macOS:**
+     ```bash
+     chmod +x scripts/check-env.sh
+     ./scripts/check-env.sh
+     ```
+   السكربت يتحقق من: Node.js، npm، مجلد `jobs/` (وينشئه إن لم يوجد)، ووجود `.env.local` مع `CLAUDE_API_KEY`. إن ظهرت أخطاء، أصلحها قبل المتابعة.
+
+2. **إعداد المفتاح:**  
+   انسخ `.env.example` إلى `.env.local` في مجلد الخادم وضع مفتاح Claude:
    ```
    CLAUDE_API_KEY=sk-ant-xxxxx
    ```
-   إذا وضعت المفتاح في المجلد الرئيسي `b11`، انسخ محتوى `.env.local` إلى هنا.
 
-2. **تثبيت التبعيات (مرة واحدة):**
+3. **تثبيت التبعيات (مرة واحدة):**
    ```bash
-   cd c:\Users\b.alsalman\b11\projects\badr-forge-server
+   cd projects/badr-forge-server
    npm install
    ```
 
-3. **تشغيل الخادم:**
+4. **تشغيل الخادم:**
    ```bash
    npm run dev
    ```
 
-4. **الوصول:**  
+5. **الوصول:**  
    - الصفحة الرئيسية: http://localhost:3000  
    - بدء مهمة: `POST http://localhost:3000/api/forge/run`  
    - حالة مهمة: `GET http://localhost:3000/api/forge/status/{jobId}`
 
-## اختبار سريع (بعد التشغيل)
+## اختبار الـ API (بعد التشغيل)
 
+استبدل `JOB_ID_HERE` بـ الـ jobId الذي يعيده طلب البدء.
+
+### بدء مهمة (POST)
+
+**curl (Bash / WSL):**
 ```bash
-curl -X POST http://localhost:3000/api/forge/run -H "Content-Type: application/json" -d "{\"projectName\":\"test\",\"description\":\"تطبيق تجريبي\"}"
-# سيعيد شيئاً مثل: {"jobId":"xxxxxxxx","status":"started"}
+curl -X POST http://localhost:3000/api/forge/run \
+  -H "Content-Type: application/json" \
+  -d '{"projectName":"تطبيق تجريبي","description":"تطبيق ويب بسيط","features":["تسجيل دخول","لوحة تحكم"]}'
+# النجاح: {"jobId":"xxxxxxxx","status":"started"}
+```
 
+**PowerShell:**
+```powershell
+$body = @{ projectName = "تطبيق تجريبي"; description = "تطبيق ويب بسيط"; features = @("تسجيل دخول","لوحة تحكم") } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:3000/api/forge/run" -Method POST -Body $body -ContentType "application/json"
+```
+
+### استعلام الحالة (GET)
+
+**curl:**
+```bash
 curl http://localhost:3000/api/forge/status/JOB_ID_HERE
 ```
+
+**PowerShell:**
+```powershell
+Invoke-RestMethod -Uri "http://localhost:3000/api/forge/status/JOB_ID_HERE" -Method GET
+```
+
+### اختبار التحقق من المدخلات (يجب أن يعيد 400)
+
+**اسم مشروع فارغ:**
+```bash
+curl -X POST http://localhost:3000/api/forge/run -H "Content-Type: application/json" -d '{"projectName":"","description":"وصف"}'
+```
+**PowerShell:** `Invoke-RestMethod ... -Body '{"projectName":"","description":"وصف"}' ...` — يتوقع `400` ورسالة "اسم المشروع مطلوب".
 
 ## المرحلة 3: تشغيل الوكيل (Aider)
 
@@ -84,6 +128,7 @@ curl http://localhost:3000/api/forge/status/JOB_ID_HERE
 - `app/api/forge/run/route.ts` — استقبال الطلب، توليد البلوبرنت، وتشغيل الوكيل (إن فُعّل)
 - `app/api/forge/status/[jobId]/route.ts` — قراءة حالة المهمة
 - `lib/forge-job.ts` — سلسلة الحالات وهيكل مجلد المهمة
+- `scripts/check-env.sh` / `check-env.ps1` — التحقق من البيئة قبل التشغيل
 - `scripts/run-agent.sh` / `run-agent.ps1` — الوكيل + auto-fix + deploy
 - `scripts/auto-fix.sh` / `auto-fix.ps1` — حلقة التصحيح
 - `scripts/deploy.sh` / `deploy.ps1` — النشر (Vercel أو محاكاة)

@@ -44,9 +44,37 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // التحقق من المدخلات
+  const projectName = typeof body.projectName === "string" ? body.projectName.trim() : "";
+  const description = typeof body.description === "string" ? body.description.trim() : "";
+  const features = Array.isArray(body.features)
+    ? body.features.filter((f): f is string => typeof f === "string").map((f) => f.trim()).slice(0, 50)
+    : [];
+
+  if (!projectName || projectName.length < 1) {
+    return NextResponse.json(
+      { error: "اسم المشروع مطلوب ولا يمكن أن يكون فارغاً" },
+      { status: 400 }
+    );
+  }
+  if (projectName.length > 200) {
+    return NextResponse.json(
+      { error: "اسم المشروع طويل جداً (الحد 200 حرف)" },
+      { status: 400 }
+    );
+  }
+  if (description.length > 10000) {
+    return NextResponse.json(
+      { error: "الوصف طويل جداً (الحد 10000 حرف)" },
+      { status: 400 }
+    );
+  }
+
+  const validatedBody = { projectName, description, features };
+
   writeFileSync(
     path.join(jobDir, "input.json"),
-    JSON.stringify(body, null, 2),
+    JSON.stringify(validatedBody, null, 2),
     "utf-8"
   );
 
@@ -56,7 +84,7 @@ export async function POST(req: NextRequest) {
     "status: started → generating_blueprint"
   );
 
-  generateBlueprint(jobId, body, apiKey).catch((err) => {
+  generateBlueprint(jobId, validatedBody, apiKey).catch((err) => {
     writeJobStatus(
       jobDir,
       { status: "error", error: String(err?.message ?? err) },
