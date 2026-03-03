@@ -44,6 +44,18 @@ export default function ForgeUI() {
     return () => clearInterval(t);
   }, [jobId, status, fetchStatus]);
 
+  const [copied, setCopied] = useState(false);
+  async function copyJobId() {
+    if (!jobId) return;
+    try {
+      await navigator.clipboard.writeText(jobId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -80,12 +92,26 @@ export default function ForgeUI() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 p-6 md:p-10">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold mb-2">بدر فورج</h1>
-        <p className="text-zinc-600 dark:text-zinc-400 mb-8">أدخل بيانات المشروع ثم اضغط ابدأ التوليد. سنولّد البلوبرنت ثم نتابع الحالة حتى النشر.</p>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col">
+      <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/80">
+        <div className="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold">بدر فورج</h1>
+          <a
+            href="https://github.com/badroneai/badr-forge"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            المستودع
+          </a>
+        </div>
+      </header>
 
-        <form onSubmit={handleSubmit} className="space-y-4 mb-8">
+      <main className="flex-1 p-6 md:p-10">
+        <div className="max-w-2xl mx-auto">
+          <p className="text-zinc-600 dark:text-zinc-400 mb-8">أدخل بيانات المشروع ثم اضغط ابدأ التوليد. سنولّد البلوبرنت ثم نتابع الحالة حتى النشر.</p>
+
+          <form onSubmit={handleSubmit} className="space-y-4 mb-8">
           <div>
             <label className="block text-sm font-medium mb-1">اسم المشروع</label>
             <input
@@ -132,7 +158,17 @@ export default function ForgeUI() {
 
         {jobId && status && (
           <section className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 space-y-2">
-            <p className="text-sm text-zinc-500">المهمة: <code className="bg-zinc-100 dark:bg-zinc-800 px-1 rounded">{jobId}</code></p>
+            <p className="text-sm text-zinc-500 flex items-center gap-2 flex-wrap">
+              <span>المهمة:</span>
+              <code className="bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded font-mono">{jobId}</code>
+              <button
+                type="button"
+                onClick={copyJobId}
+                className="text-xs px-2 py-1 rounded border border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                {copied ? "تم النسخ" : "نسخ"}
+              </button>
+            </p>
             <p className="font-medium">الحالة: {statusLabel(status.status)}</p>
             {status.currentStage && (
               <p className="text-sm text-zinc-600 dark:text-zinc-400">المرحلة الحالية من البلوبرنت: {status.currentStage}</p>
@@ -151,7 +187,22 @@ export default function ForgeUI() {
             )}
           </section>
         )}
-      </div>
+
+          <section className="mt-12 pt-8 border-t border-zinc-200 dark:border-zinc-800">
+            <h2 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-3">كيف يعمل</h2>
+            <ol className="text-sm text-zinc-600 dark:text-zinc-400 space-y-2 list-decimal list-inside">
+              <li>تكتب اسم المشروع والوصف (والميزات إن رغبت).</li>
+              <li>يُولَّد بلوبرنت كامل تلقائياً (6 مراحل عبر Claude).</li>
+              <li>إن فُعّل الوكيل: يُبنى المشروع ويُصحَّح حتى نجاح البناء.</li>
+              <li>إن فُعّل النشر: يُعاد رابط المشروع المنشور هنا.</li>
+            </ol>
+          </section>
+        </div>
+      </main>
+
+      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        بدر فورج — مصنع المشاريع
+      </footer>
     </div>
   );
 }
